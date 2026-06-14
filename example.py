@@ -32,6 +32,16 @@ def cosyvoice_example():
                                                        'Theo \'Crimson\', is a fiery, passionate rebel leader. Fights with fervor for justice, but struggles with impulsiveness.<|endofprompt|>')):
         torchaudio.save('instruct_{}.wav'.format(i), j['tts_speech'], cosyvoice.sample_rate)
 
+def cosyedit_example():
+    cosyedit = AutoModel(model_dir='pretrained_models/CosyEdit')
+    
+    target_text = "But when I saw the mirage of the lake in the distance, which the sense deceives, Lost not by distance any of its marks,"
+    original_text = "But when I had approached so near to them The common object, which the sense deceives, Lost not by distance any of its marks,"
+    original_speech = './asset/84_121550_000074_000000.wav'
+    
+    # edit usage
+    for i, j in enumerate(cosyedit.inference_edit(target_text, original_text, original_speech)):
+        torchaudio.save('edit_{}.wav'.format(i), j['tts_speech'], cosyedit.sample_rate)
 
 def cosyvoice2_example():
     """ CosyVoice2 Usage, check https://funaudiollm.github.io/cosyvoice2/ for more details
@@ -105,7 +115,9 @@ def cosyvoice3_example():
 def main():
     # cosyvoice_example()
     # cosyvoice2_example()
-    cosyvoice3_example()
+    # cosyvoice3_example()
+    
+    cosyedit_example()
 
 
 if __name__ == '__main__':

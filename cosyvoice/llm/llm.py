@@ -222,6 +222,73 @@ class TransformerLM(torch.nn.Module):
             offset += lm_input.size(1)
             lm_input = self.speech_embedding.weight[top_ids].reshape(1, 1, -1)
 
+    @torch.inference_mode()
+    def inference_edit(
+            self,
+            target_text: torch.Tensor,
+            target_text_len: torch.Tensor,
+            original_text: torch.Tensor,
+            original_text_len: torch.Tensor,
+            original_speech_token: torch.Tensor,
+            original_speech_token_len: torch.Tensor,
+            embedding: torch.Tensor,
+            sampling: int = 25,
+            max_token_text_ratio: float = 20,
+            min_token_text_ratio: float = 2,
+            uuid: str = '',
+    ) -> Generator[torch.Tensor, None, None]:
+        device = target_text.device
+        text = torch.concat([original_text, target_text], dim=1)
+        text_len = target_text_len + original_text_len
+        text = self.text_embedding(text)
+
+        # 1. encode text
+        text, text_len = self.encode(text, text_len)
+
+        # 2. encode embedding
+        if embedding.shape[0] != 0:
+            embedding = F.normalize(embedding, dim=1)
+            embedding = self.spk_embed_affine_layer(embedding)
+            embedding = embedding.unsqueeze(dim=1)
+        else:
+            embedding = torch.zeros(1, 0, self.llm_input_size, dtype=text.dtype).to(device).to(text.dtype)
+
+        # 3. concat llm_input
+        sos_emb = self.llm_embedding.weight[self.sos].reshape(1, 1, -1)
+        task_id_emb = self.llm_embedding.weight[self.task_id].reshape(1, 1, -1)
+        if original_speech_token_len != 0:
+            original_speech_token_emb = self.speech_embedding(original_speech_token)
+        else:
+            original_speech_token_emb = torch.zeros(1, 0, self.llm_input_size, dtype=text.dtype).to(device)
+
+        text_len = int(text_len)
+        original_speech_token_len = int(original_speech_token_len)
+
+        lm_input = torch.concat([sos_emb, embedding, text, task_id_emb, original_speech_token_emb], dim=1)
+
+        # 4. cal min/max_length
+        min_len = int((text_len - original_text_len) * min_token_text_ratio)
+        max_len = int((text_len - original_text_len) * max_token_text_ratio)
+
+        # 5. step by step decode
+        out_tokens = []
+        offset = 0
+        att_cache, cnn_cache = torch.zeros((0, 0, 0, 0), device=lm_input.device), torch.zeros((0, 0, 0, 0), device=lm_input.device)
+        for i in range(max_len):
+            y_pred, att_cache, cnn_cache = self.llm.forward_chunk(lm_input, offset=offset, required_cache_size=-1,
+                                                                  att_cache=att_cache, cnn_cache=cnn_cache,
+                                                                  att_mask=torch.tril(torch.ones((1, lm_input.shape[1], lm_input.shape[1]),
+                                                                                                 device=lm_input.device)).to(torch.bool))
+            logp = self.llm_decoder(y_pred[:, -1]).log_softmax(dim=-1)
+            top_ids = self.sampling_ids(logp.squeeze(dim=0), out_tokens, sampling, ignore_eos=True if i < min_len else False)
+            if top_ids == self.eos_token:
+                break
+            # in stream mode, yield token one by one
+            yield top_ids
+            out_tokens.append(top_ids)
+            offset += lm_input.size(1)
+            lm_input = self.speech_embedding.weight[top_ids].reshape(1, 1, -1)
+
 
 class Qwen2Encoder(torch.nn.Module):
     def __init__(self, pretrain_path):

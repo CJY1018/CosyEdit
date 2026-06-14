@@ -124,6 +124,13 @@ class CosyVoiceFrontEnd:
         speech_feat_len = torch.tensor([speech_feat.shape[1]], dtype=torch.int32).to(self.device)
         return speech_feat, speech_feat_len
 
+    def _extract_speech_feat_edit(self, prompt_wav):
+        speech = load_wav(prompt_wav, 22050)
+        speech_feat = self.feat_extractor(speech).squeeze(dim=0).transpose(0, 1).to(self.device)
+        speech_feat = speech_feat.unsqueeze(dim=0)
+        speech_feat_len = torch.tensor([speech_feat.shape[1]], dtype=torch.int32).to(self.device)
+        return speech_feat, speech_feat_len
+
     def text_normalize(self, text, split=True, text_frontend=True):
         if isinstance(text, Generator):
             logging.info('get tts_text generator, will skip text_normalize!')
@@ -186,6 +193,24 @@ class CosyVoiceFrontEnd:
             model_input = {**self.spk2info[zero_shot_spk_id]}
         model_input['text'] = tts_text_token
         model_input['text_len'] = tts_text_token_len
+        return model_input
+
+    def frontend_edit(self, target_text, original_text, original_wav, zero_shot_spk_id):
+        target_text_token, target_text_token_len = self._extract_text_token(target_text)
+        if zero_shot_spk_id == '':
+            original_text_token, original_text_token_len = self._extract_text_token(original_text)
+            speech_feat, speech_feat_len = self._extract_speech_feat_edit(original_wav)
+            speech_token, speech_token_len = self._extract_speech_token(original_wav)
+            embedding = self._extract_spk_embedding(original_wav)
+            model_input = {'original_text': original_text_token, 'original_text_len': original_text_token_len,
+                           'llm_original_speech_token': speech_token, 'llm_original_speech_token_len': speech_token_len,
+                           'flow_original_speech_token': speech_token, 'flow_original_speech_token_len': speech_token_len,
+                           'original_speech_feat': speech_feat, 'original_speech_feat_len': speech_feat_len,
+                           'llm_embedding': embedding, 'flow_embedding': embedding}
+        else:
+            model_input = {**self.spk2info[zero_shot_spk_id]}
+        model_input['target_text'] = target_text_token
+        model_input['target_text_len'] = target_text_token_len
         return model_input
 
     def frontend_cross_lingual(self, tts_text, prompt_wav, resample_rate, zero_shot_spk_id):
